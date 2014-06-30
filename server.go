@@ -126,7 +126,7 @@ func serving() bool {
 
 func (s *Server) AdvertiseAndServe() error {
 	serverRunningMu.Lock()
-	defer serverRunningMu.Unlock()
+	//defer serverRunningMu.Unlock()
 	if serverRunning {
 		return errors.New("a server is already running")
 	}
@@ -158,7 +158,7 @@ func (s *Server) AdvertiseAndServe() error {
 	}
 
 	serverRunning = true
-
+	serverRunningMu.Unlock()
 	if err := s.l2cap.setServices(s.Name, s.services); err != nil {
 		return err
 	}

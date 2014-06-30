@@ -35,6 +35,7 @@ func newL2cap(s shim, handler l2capHandler) *l2cap {
 	c := &l2cap{
 		shim:    s,
 		readbuf: bufio.NewReader(s),
+		scanner: bufio.NewScanner(s),
 		mtu:     23,
 		handler: handler,
 	}
@@ -52,6 +53,7 @@ const (
 type l2cap struct {
 	shim     shim
 	readbuf  *bufio.Reader
+	scanner  *bufio.Scanner
 	sendmu   sync.Mutex // serializes writes to the shim
 	mtu      uint16
 	handles  *handleRange
@@ -85,11 +87,24 @@ func (c *l2cap) close() error {
 		return errors.New("not serving")
 	}
 	c.serving = false
+	c.quit <- struct{}{}
 	close(c.quit)
 	return nil
 }
 
+func reader(c *l2cap, ch chan string) {
+	c.scanner.Scan()
+	err := c.scanner.Err()
+	s := c.scanner.Text()
+	if err != nil {
+		//return err
+	}
+	ch <- s
+}
+
 func (c *l2cap) eventloop() error {
+	ch := make(chan string)
+	go reader(c, ch)
 	for {
 		// TODO: Check c.quit *concurrently* with other
 		// blocking activities.
@@ -98,66 +113,83 @@ func (c *l2cap) eventloop() error {
 			return nil
 		default:
 		}
-
-		s, err := c.readbuf.ReadString('\n')
-		// log.Printf("L2CAP: Received %s", s)
+//		s, err := c.readbuf.ReadString('\n')
+		/*val := c.scanner.Scan()
+		println("LoopScan")
+		println("Value: ", val)
+		err := c.scanner.Err()
+		s := c.scanner.Text()
+		println("Loop1/2")
+		println("L2CAP: Received %s", s)
 		if err != nil {
 			return err
-		}
-		f := strings.Fields(s)
-		if len(f) < 2 {
-			continue
-		}
+		}*/
+		
+		//s, ok := <-ch
+		select {
+		case s, ok := <-ch:
+			if ok {
+				f := strings.Fields(s)
+				if len(f) < 2 {
+					continue
+				}
+				// TODO: Think about concurrency here. Do we want to spawn
+				// new goroutines to not block this core loop?
 
-		// TODO: Think about concurrency here. Do we want to spawn
-		// new goroutines to not block this core loop?
-
-		switch f[0] {
-		case "accept":
-			hw, err := net.ParseMAC(f[1])
-			if err != nil {
-				return errors.New("failed to parse accepted addr " + f[1] + ": " + err.Error())
+				switch f[0] {
+				case "accept":
+					hw, err := net.ParseMAC(f[1])
+					if err != nil {
+						return errors.New("failed to parse accepted addr " + f[1] + ": " + err.Error())
+					}
+					c.handler.connected(hw)
+					c.mtu = 23
+				case "disconnect":
+					hw, err := net.ParseMAC(f[1])
+					if err != nil {
+						return errors.New("failed to parse disconnected addr " + f[1] + ": " + err.Error())
+					}
+					c.handler.disconnected(hw)
+				case "rssi":
+					n, err := strconv.Atoi(f[1])
+					if err != nil {
+						return errors.New("failed to parse rssi " + f[1] + ": " + err.Error())
+					}
+					c.handler.receivedRSSI(n)
+				case "security":
+					switch f[1] {
+					case "low":
+						c.security = securityLow
+					case "medium":
+						c.security = securityMed
+					case "high":
+						c.security = securityHigh
+					default:
+						return errors.New("unexpected security change: " + f[1])
+					}
+					// TODO: notify l2capHandler about security change
+				case "bdaddr":
+					c.handler.receivedBDAddr(f[1])
+				case "hciDeviceId":
+					// log.Printf("l2cap hci device: %s", f[1])
+				case "data":
+					req, err := hex.DecodeString(f[1])
+					if err != nil {
+						return err
+					}
+					if err = c.handleReq(req); err != nil {
+						return err
+					}
+				}
+				go reader(c, ch)
+			} else {
+				println("No read from chan!")
 			}
-			c.handler.connected(hw)
-			c.mtu = 23
-		case "disconnect":
-			hw, err := net.ParseMAC(f[1])
-			if err != nil {
-				return errors.New("failed to parse disconnected addr " + f[1] + ": " + err.Error())
-			}
-			c.handler.disconnected(hw)
-		case "rssi":
-			n, err := strconv.Atoi(f[1])
-			if err != nil {
-				return errors.New("failed to parse rssi " + f[1] + ": " + err.Error())
-			}
-			c.handler.receivedRSSI(n)
-		case "security":
-			switch f[1] {
-			case "low":
-				c.security = securityLow
-			case "medium":
-				c.security = securityMed
-			case "high":
-				c.security = securityHigh
-			default:
-				return errors.New("unexpected security change: " + f[1])
-			}
-			// TODO: notify l2capHandler about security change
-		case "bdaddr":
-			c.handler.receivedBDAddr(f[1])
-		case "hciDeviceId":
-			// log.Printf("l2cap hci device: %s", f[1])
-		case "data":
-			req, err := hex.DecodeString(f[1])
-			if err != nil {
-				return err
-			}
-			if err = c.handleReq(req); err != nil {
-				return err
-			}
+		default:
 		}
 	}
+	println("Eventloop ended!")
+	return nil
 }
 
 func (c *l2cap) disconnect() error {
@@ -172,8 +204,8 @@ func (c *l2cap) send(b []byte) error {
 	if len(b) > int(c.mtu) {
 		panic(fmt.Errorf("cannot send %x: mtu %d", b, c.mtu))
 	}
-
-	// log.Printf("L2CAP: Sending %x", b)
+	
+//	log.Printf("L2CAP: Sending %x", b)
 	c.sendmu.Lock()
 	_, err := fmt.Fprintf(c.shim, "%x\n", b)
 	c.sendmu.Unlock()
