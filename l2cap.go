@@ -194,12 +194,15 @@ func (c *l2cap) eventloop() error {
 				case "data":
 					req, err := hex.DecodeString(f[1])
 					if err != nil {
+						println("nil error!")
 						return err
 					}
 					if err = c.handleReq(req); err != nil {
+						println("handlereqerr")
 						return err
 					}
 				case "close":
+					println("close quit")
 					c.quit <- struct{}{} //call c.quit when close from l2cap is received
 					close(c.quit)
 				}
