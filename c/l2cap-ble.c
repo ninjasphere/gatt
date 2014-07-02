@@ -14,6 +14,7 @@
 int lastSignal = 0;
 
 static void signalHandler(int signal) {
+    printf("Received signal\n");
   lastSignal = signal;
 }
 
@@ -140,7 +141,6 @@ int main(int argc, const char* argv[]) {
 
         tv.tv_sec = 1;
         tv.tv_usec = 0;
-
         result = select(clientL2capSock + 1, &rfds, NULL, NULL, &tv);
 
         if (-1 == result) {

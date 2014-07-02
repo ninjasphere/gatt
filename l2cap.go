@@ -87,8 +87,19 @@ func (c *l2cap) close() error {
 		return errors.New("not serving")
 	}
 	c.serving = false
+	//close the c shim to close server
+	println("Called signal to cshim!")
+	err := c.shim.Signal(syscall.SIGKILL)
+	c.shim.Wait()
+	println("After wait!")
+	//c.shim.Close()
+	if err != nil {
+		println("Failed to send message to l2cap: ", err)
+	}
+	//call c.quit when close signal of shim arrives
+	/*
 	c.quit <- struct{}{}
-	close(c.quit)
+	close(c.quit)*/
 	return nil
 }
 
@@ -96,6 +107,7 @@ func reader(c *l2cap, ch chan string) {
 	c.scanner.Scan()
 	err := c.scanner.Err()
 	s := c.scanner.Text()
+	
 	if err != nil {
 		//return err
 	}
@@ -104,15 +116,21 @@ func reader(c *l2cap, ch chan string) {
 
 func (c *l2cap) eventloop() error {
 	ch := make(chan string)
-	go reader(c, ch)
+	go reader(c, ch) //spawn a reader
 	for {
 		// TODO: Check c.quit *concurrently* with other
 		// blocking activities.
-		select {
-		case <-c.quit:
-			return nil
-		default:
-		}
+		
+		// select {
+// 		case <-c.quit:
+// 			return nil
+// 		default:
+// 		}
+
+
+
+
+
 //		s, err := c.readbuf.ReadString('\n')
 		/*val := c.scanner.Scan()
 		println("LoopScan")
@@ -127,12 +145,13 @@ func (c *l2cap) eventloop() error {
 		
 		//s, ok := <-ch
 		select {
-		case s, ok := <-ch:
+		case s, ok := <-ch: //wait for signals
 			if ok {
 				f := strings.Fields(s)
 				if len(f) < 2 {
+					//println("F0 is: ",f[0])
 					continue
-				}
+				} 
 				// TODO: Think about concurrency here. Do we want to spawn
 				// new goroutines to not block this core loop?
 
@@ -180,8 +199,16 @@ func (c *l2cap) eventloop() error {
 					if err = c.handleReq(req); err != nil {
 						return err
 					}
+				case "close":
+					c.quit <- struct{}{} //call c.quit when close from l2cap is received
+					close(c.quit)
 				}
-				go reader(c, ch)
+				select {
+				case <-c.quit: //if c.quit is activated, stop loop
+					return nil
+				default:
+					go reader(c, ch) //else spawn a new reader 
+				}
 			} else {
 				println("No read from chan!")
 			}

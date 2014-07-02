@@ -10,5 +10,11 @@ install:
 	mv l2cap-ble $(DESTDIR)
 	setcap 'CAP_NET_RAW=+ep' $(DESTDIR)/hci-ble
 
+uninstall:
+	rm $(DESTDIR)/hci-ble
+	rm $(DESTDIR)/l2cap-ble
+
 clean:
 	rm -f hci-ble l2cap-ble
+
+
