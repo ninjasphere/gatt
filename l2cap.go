@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"log"
 )
 
 // l2capHandler is the set of callback methods required to handle l2cap events.
@@ -88,10 +89,8 @@ func (c *l2cap) close() error {
 	}
 	c.serving = false
 	//close the c shim to close server
-	println("Called signal to cshim!")
-	err := c.shim.Signal(syscall.SIGKILL)
+	err := c.shim.Signal(syscall.SIGINT)
 	c.shim.Wait()
-	println("After wait!")
 	//c.shim.Close()
 	if err != nil {
 		println("Failed to send message to l2cap: ", err)
@@ -118,44 +117,19 @@ func (c *l2cap) eventloop() error {
 	ch := make(chan string)
 	go reader(c, ch) //spawn a reader
 	for {
-		// TODO: Check c.quit *concurrently* with other
-		// blocking activities.
-		
-		// select {
-// 		case <-c.quit:
-// 			return nil
-// 		default:
-// 		}
-
-
-
-
-
-//		s, err := c.readbuf.ReadString('\n')
-		/*val := c.scanner.Scan()
-		println("LoopScan")
-		println("Value: ", val)
-		err := c.scanner.Err()
-		s := c.scanner.Text()
-		println("Loop1/2")
-		println("L2CAP: Received %s", s)
-		if err != nil {
-			return err
-		}*/
-		
-		//s, ok := <-ch
 		select {
 		case s, ok := <-ch: //wait for signals
 			if ok {
 				f := strings.Fields(s)
-				if len(f) < 2 {
-					//println("F0 is: ",f[0])
+				if len(f) == 0 {
 					continue
-				} 
-				// TODO: Think about concurrency here. Do we want to spawn
-				// new goroutines to not block this core loop?
+				} else if len(f) < 2 && f[0] != "close" {
+					continue
+				}
 
 				switch f[0] {
+				case "close":
+					return nil //when receive close, return
 				case "accept":
 					hw, err := net.ParseMAC(f[1])
 					if err != nil {
@@ -194,31 +168,21 @@ func (c *l2cap) eventloop() error {
 				case "data":
 					req, err := hex.DecodeString(f[1])
 					if err != nil {
-						println("nil error!")
+						log.Println("data error")
 						return err
 					}
 					if err = c.handleReq(req); err != nil {
-						println("handlereqerr")
+						log.Println("handleReq error")
 						return err
 					}
-				case "close":
-					println("close quit")
-					c.quit <- struct{}{} //call c.quit when close from l2cap is received
-					close(c.quit)
 				}
-				select {
-				case <-c.quit: //if c.quit is activated, stop loop
-					return nil
-				default:
-					go reader(c, ch) //else spawn a new reader 
-				}
+				go reader(c, ch) //after successful read, spawn a new reader
 			} else {
-				println("No read from chan!")
+				log.Println("Error in l2cap read-channel")
 			}
 		default:
 		}
 	}
-	println("Eventloop ended!")
 	return nil
 }
 
@@ -230,16 +194,20 @@ func (c *l2cap) updateRSSI() error {
 	return c.shim.Signal(syscall.SIGUSR1)
 }
 
-func (c *l2cap) send(b []byte) error {
-	if len(b) > int(c.mtu) {
-		panic(fmt.Errorf("cannot send %x: mtu %d", b, c.mtu))
-	}
+func (c *l2cap) send(b []byte) error {	
+	if c.serving {
+		if len(b) > int(c.mtu) {
+			panic(fmt.Errorf("cannot send %x: mtu %d", b, c.mtu))
+		}
 	
-//	log.Printf("L2CAP: Sending %x", b)
-	c.sendmu.Lock()
-	_, err := fmt.Fprintf(c.shim, "%x\n", b)
-	c.sendmu.Unlock()
-	return err
+	//	log.Printf("L2CAP: Sending %x", b)
+		c.sendmu.Lock()
+		_, err := fmt.Fprintf(c.shim, "%x\n", b)
+		c.sendmu.Unlock()
+		return err
+	}
+	//TODO: Consider returning an error, when server is closed
+	return nil
 }
 
 type attErr struct {
@@ -258,31 +226,36 @@ func (e attErr) Marshal() []byte {
 // handleReq dispatches a raw request from the l2cap shim
 // to an appropriate handler, based on its type.
 // It panics if len(b) == 0.
+
+//TODO: Fix error when server is closed, before handleReq is called (bad file descriptor)
 func (c *l2cap) handleReq(b []byte) error {
 	var resp []byte
-
-	switch reqType, req := b[0], b[1:]; reqType {
-	case attOpMtuReq:
-		resp = c.handleMTU(req)
-	case attOpFindInfoReq:
-		resp = c.handleFindInfo(req)
-	case attOpFindByTypeReq:
-		resp = c.handleFindByType(req)
-	case attOpReadByTypeReq:
-		resp = c.handleReadByType(req)
-	case attOpReadReq, attOpReadBlobReq:
-		resp = c.handleRead(reqType, req)
-	case attOpReadByGroupReq:
-		resp = c.handleReadByGroup(req)
-	case attOpWriteReq, attOpWriteCmd:
-		resp = c.handleWrite(reqType, req)
-	case attOpReadMultiReq, attOpPrepWriteReq, attOpExecWriteReq, attOpSignedWriteCmd:
-		fallthrough
-	default:
-		resp = attErr{opcode: reqType, handle: 0x0000, status: attEcodeReqNotSupp}.Marshal()
-	}
-
-	return c.send(resp)
+	
+	if c.serving {
+		switch reqType, req := b[0], b[1:]; reqType {
+		case attOpMtuReq:
+			resp = c.handleMTU(req)
+		case attOpFindInfoReq:
+			resp = c.handleFindInfo(req)
+		case attOpFindByTypeReq:
+			resp = c.handleFindByType(req)
+		case attOpReadByTypeReq:
+			resp = c.handleReadByType(req)
+		case attOpReadReq, attOpReadBlobReq:
+			resp = c.handleRead(reqType, req)
+		case attOpReadByGroupReq:
+			resp = c.handleReadByGroup(req)
+		case attOpWriteReq, attOpWriteCmd:
+			resp = c.handleWrite(reqType, req)
+		case attOpReadMultiReq, attOpPrepWriteReq, attOpExecWriteReq, attOpSignedWriteCmd:
+			fallthrough
+		default:
+			resp = attErr{opcode: reqType, handle: 0x0000, status: attEcodeReqNotSupp}.Marshal()
+		}
+		return c.send(resp)
+	} 
+	//TODO: Consider returning an error, when server is closed
+	return nil
 }
 
 func (c *l2cap) handleMTU(b []byte) []byte {

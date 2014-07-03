@@ -98,7 +98,6 @@ type Server struct {
 // All services must be added before starting the server.
 func (s *Server) AddService(u UUID) *Service {
 	if serving() {
-		println("Server is serving! Returned nil!")
 		return nil
 	}
 	svc := &Service{uuid: u}
@@ -159,7 +158,6 @@ func (s *Server) AdvertiseAndServe() error {
 	}
 
 	serverRunning = true
-	println("Server running true")
 	serverRunningMu.Unlock()
 	if err := s.l2cap.setServices(s.Name, s.services); err != nil {
 		return err
@@ -245,14 +243,11 @@ func (s *Server) start() error {
 
 // Close stops a Server.
 func (s *Server) Close() error {
-	println("Close called!")
 	if !serving() {
 		return errors.New("not serving")
 	}
-	println("call hci close")
 	err := s.hci.Close()
 	s.hci.Wait()
-	println("call l2cap close")
 	l2caperr := s.l2cap.close()
 	if err == nil {
 		err = l2caperr
@@ -260,9 +255,7 @@ func (s *Server) Close() error {
 	s.close(err)
 	serverRunningMu.Lock()
 	serverRunning = false
-	println("Server running false")
 	serverRunningMu.Unlock()
-	println("CLOSED THE SERVER!")
 	return err
 }
 
