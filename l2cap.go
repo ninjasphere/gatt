@@ -91,7 +91,6 @@ func (c *l2cap) close() error {
 	//close the c shim to close server
 	err := c.shim.Signal(syscall.SIGINT)
 	c.shim.Wait()
-	println("Sent sigint!")
 	c.serving = false
 	
 	//c.shim.Close()
@@ -109,12 +108,11 @@ func (c *l2cap) close() error {
 
 func (c *l2cap) eventloop() error {
 	for {
-		println("FORLOOP")
 		c.scanner.Scan()
 		err := c.scanner.Err()
 		s := c.scanner.Text()
 		
-		println(s)
+		
 		if err != nil {
 			//return err
 		}
@@ -128,7 +126,6 @@ func (c *l2cap) eventloop() error {
 
 		switch f[0] {
 		case "close":
-			println("is really closed!")
 			return nil //when receive close, return
 		case "accept":
 			hw, err := net.ParseMAC(f[1])
@@ -563,9 +560,12 @@ func (c *l2cap) handleWrite(reqType byte, b []byte) []byte {
 		return attErr{opcode: reqType, handle: valuen, status: attEcodeAuthentication}.Marshal()
 	}
 
+
 	if h.typ != "descriptor" && !uuidEqual(h.uuid, gattAttrClientCharacteristicConfigUUID) {
 		// Regular write, not CCC
+		//TODO: Stuck here while receiving and shutting down, fix that
 		result := c.handler.writeChar(h.attr.(*Characteristic), data, noResp)
+		
 		if noResp {
 			return nil
 		}
@@ -592,6 +592,7 @@ func (c *l2cap) handleWrite(reqType byte, b []byte) []byte {
 		}
 		return []byte{attOpWriteResp}
 	}
+	
 
 	c.handler.startNotify(char, int(c.mtu-3))
 	if noResp {
