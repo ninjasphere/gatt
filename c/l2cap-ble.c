@@ -14,8 +14,7 @@
 int lastSignal = 0;
 
 static void signalHandler(int signal) {
-    printf("Received signal\n");
-  lastSignal = signal;
+    lastSignal = signal;
 }
 
 int main(int argc, const char* argv[]) {
@@ -168,6 +167,7 @@ int main(int argc, const char* argv[]) {
             printf("rssi = %d\n", rssi);
           }
         } else if (result) {
+
           if (FD_ISSET(0, &rfds)) {
             len = read(0, stdinBuf, sizeof(stdinBuf));
 
