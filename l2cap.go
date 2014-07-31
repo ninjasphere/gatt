@@ -9,12 +9,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"log"
 )
 
 // l2capHandler is the set of callback methods required to handle l2cap events.
@@ -69,7 +69,7 @@ func (c *l2cap) listenAndServe() error {
 		return errors.New("already serving")
 	}
 	c.serving = true
-//	return c.eventloop()
+	//	return c.eventloop()
 	go c.eventloop()
 	return nil
 }
@@ -92,17 +92,17 @@ func (c *l2cap) close() error {
 	err := c.shim.Signal(syscall.SIGINT)
 	c.shim.Wait()
 	c.serving = false
-	
+
 	//c.shim.Close()
 	if err != nil {
 		println("Failed to send message to l2cap: ", err)
 	}
 	//call c.quit when close signal of shim arrives
 	/*
-	c.quit <- struct{}{}
-	close(c.quit)*/
+		c.quit <- struct{}{}
+		close(c.quit)*/
 	//c.serving = false
-	
+
 	return nil
 }
 
@@ -111,12 +111,11 @@ func (c *l2cap) eventloop() error {
 		c.scanner.Scan()
 		err := c.scanner.Err()
 		s := c.scanner.Text()
-		
-		
+
 		if err != nil {
 			//return err
 		}
-		
+
 		f := strings.Fields(s)
 		if len(f) == 0 {
 			continue
@@ -185,13 +184,13 @@ func (c *l2cap) updateRSSI() error {
 	return c.shim.Signal(syscall.SIGUSR1)
 }
 
-func (c *l2cap) send(b []byte) error {	
+func (c *l2cap) send(b []byte) error {
 	if c.serving {
 		if len(b) > int(c.mtu) {
 			panic(fmt.Errorf("cannot send %x: mtu %d", b, c.mtu))
 		}
-	
-	//	log.Printf("L2CAP: Sending %x", b)
+
+		//	log.Printf("L2CAP: Sending %x", b)
 		c.sendmu.Lock()
 		_, err := fmt.Fprintf(c.shim, "%x\n", b)
 		c.sendmu.Unlock()
@@ -221,7 +220,7 @@ func (e attErr) Marshal() []byte {
 //TODO: Fix error when server is closed, before handleReq is called (bad file descriptor)
 func (c *l2cap) handleReq(b []byte) error {
 	var resp []byte
-	
+
 	if c.serving {
 		switch reqType, req := b[0], b[1:]; reqType {
 		case attOpMtuReq:
@@ -244,7 +243,7 @@ func (c *l2cap) handleReq(b []byte) error {
 			resp = attErr{opcode: reqType, handle: 0x0000, status: attEcodeReqNotSupp}.Marshal()
 		}
 		return c.send(resp)
-	} 
+	}
 	//TODO: Consider returning an error, when server is closed
 	return errors.New("Handling request while server is down.")
 }
@@ -560,12 +559,11 @@ func (c *l2cap) handleWrite(reqType byte, b []byte) []byte {
 		return attErr{opcode: reqType, handle: valuen, status: attEcodeAuthentication}.Marshal()
 	}
 
-
 	if h.typ != "descriptor" && !uuidEqual(h.uuid, gattAttrClientCharacteristicConfigUUID) {
 		// Regular write, not CCC
 		//TODO: Stuck here while receiving and shutting down, fix that
 		result := c.handler.writeChar(h.attr.(*Characteristic), data, noResp)
-		
+
 		if noResp {
 			return nil
 		}
@@ -592,7 +590,6 @@ func (c *l2cap) handleWrite(reqType byte, b []byte) []byte {
 		}
 		return []byte{attOpWriteResp}
 	}
-	
 
 	c.handler.startNotify(char, int(c.mtu-3))
 	if noResp {
