@@ -47,6 +47,8 @@ type Client struct {
 	quitonce sync.Once
 	quit     chan struct{}
 	err      error
+	//
+	// hciShim shim
 }
 
 type DiscoveredDevice struct {
@@ -92,6 +94,7 @@ func (s *Client) Start() error {
 		return err
 	}
 
+	// s.hciShim = hciShim
 	s.hci = newHCIClient(hciShim)
 	event, data, err := s.hci.event()
 	if err != nil {
@@ -224,6 +227,7 @@ func (s *Client) Close() error {
 		err = l2caperr
 	}*/
 	s.close(err)
+	// s.hciShim.Close()
 	//serverRunningMu.Lock()
 	//serverRunning = false
 	//serverRunningMu.Unlock()
@@ -234,7 +238,8 @@ func (c *Client) handleAdvertisingEvent(data string) error {
 
 	fields := strings.Split(data, ",")
 
-	//log.Printf("Advertising event! : %q", fields)
+	// log.Printf("Advertising event! : %q", fields)
+	// spew.Dump(fields)
 
 	address := fields[0]
 	publicAddress := fields[1] == "public"
@@ -248,7 +253,6 @@ func (c *Client) handleAdvertisingEvent(data string) error {
 	}
 
 	if c.devices == nil {
-		log.Printf("Initialising discovered devices")
 		c.devices = make(map[string]*DiscoveredDevice)
 	}
 
@@ -428,5 +432,18 @@ func (c *Client) ReadByHandle(address string, handle uint16) chan []byte {
 }
 
 func (c *Client) SendRawCommands(address string, strcmds []string) {
+	if len(address) == 0 || strcmds == nil {
+		log.Fatalf("SendRawCommands received nil address or commands")
+		return
+	}
+
+	if c.devices[address] == nil {
+		log.Fatalf("Device %s does not exist, has it been created?", address)
+	}
+
+	if c.devices[address].l2cap == nil {
+		log.Fatalf("L2cap client not available for address %s, have you connected to it?", address)
+	}
+
 	c.devices[address].l2cap.SendRawCommands(strcmds)
 }

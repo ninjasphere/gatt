@@ -437,11 +437,10 @@ func (c *l2capClient) SendRawCommands(strcmds []string) {
 	}
 
 	for _, cmd := range bytecmds {
-
 		c.queueCommand(&l2capClientCommand{
 			buffer: cmd,
 			callback: func(response []byte) {
-				// log.Printf("		received: %s", response)
+				// log.Printf("received %s after sending %s raw command", hex.EncodeToString(response), hex.EncodeToString(cmd))
 			},
 		})
 	}
