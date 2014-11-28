@@ -84,6 +84,7 @@ func (c *l2cap) close() error {
 	if !c.serving {
 		return errors.New("not serving")
 	}
+	c.shim.Close()
 	c.serving = false
 	close(c.quit)
 	return nil

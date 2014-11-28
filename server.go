@@ -126,7 +126,6 @@ func serving() bool {
 
 func (s *Server) AdvertiseAndServe() error {
 	serverRunningMu.Lock()
-	defer serverRunningMu.Unlock()
 	if serverRunning {
 		return errors.New("a server is already running")
 	}
@@ -165,6 +164,10 @@ func (s *Server) AdvertiseAndServe() error {
 	if err := s.startAdvertising(); err != nil {
 		return err
 	}
+
+	// must be unlocked before we go into the event loop, otherwise
+	// nothing else can ever poll the running status.
+	serverRunningMu.Unlock()
 
 	return s.l2cap.listenAndServe()
 }
