@@ -287,7 +287,12 @@ func (c *Client) handleAdvertisingEvent(data string) error {
 			break
 		}
 
-		payload := eir[i+2 : i+2+length-1]
+		var payload []uint8
+
+		if length > 0 {
+			payload = eir[i+2 : i+2+length-1]
+		}
+
 
 		switch dataType {
 		case 0x01: // Flags
