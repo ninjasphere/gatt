@@ -70,6 +70,7 @@ type DeviceAdvertisement struct {
 	ServiceData      []ServiceData
 	ServiceUuids     map[string]bool
 	Flags            DeviceAdvertisementFlags
+	ClassOfDevice    []byte
 }
 
 type ServiceData struct {
@@ -355,6 +356,9 @@ func (c *Client) handleAdvertisingEvent(data string) error {
 
 		case 0x0a: // Tx Power Level
 			advertisement.TxPowerLevel = int8(payload[0])
+
+		case 0x0d: // ClassOfDevice
+			advertisement.ClassOfDevice = payload
 
 		case 0x12: // Slave Connection Interval Range
 
