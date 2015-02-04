@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	//"bytes"
 	"github.com/davecgh/go-spew/spew"
 	//"encoding/binary"
@@ -58,9 +59,9 @@ type DiscoveredDevice struct {
 	Advertisement  DeviceAdvertisement
 	discoveryCount int
 	l2cap          *l2capClient
-	Connected      func()
-	Disconnected   func()
 	Notification   func(notification *Notification)
+	Disconnected   func()
+	Services       map[string]ServiceDescription
 }
 
 type DeviceAdvertisement struct {
@@ -88,9 +89,8 @@ type DeviceAdvertisementFlags struct {
 }
 
 func (s *Client) Start() error {
-	hciDevice := cleanHCIDevice(s.HCI)
 
-	hciShim, err := newCShim("hci-ble-client", hciDevice)
+	hciShim, err := newCShim("hci-ble-client", s.HCI)
 	if err != nil {
 		return err
 	}
@@ -158,69 +158,8 @@ func (c *Client) StartScanning(allowDuplicates bool) error {
 	return c.hci.startScanning(allowDuplicates)
 }
 
-func (c *Client) Connect(address string, publicAddress bool) error {
-	device := c.devices[address]
-
-	l2cap, err := newL2capClient(address, publicAddress)
-	if err != nil {
-		return err
-	}
-
-	device.l2cap = l2cap
-
-	go func() {
-		for {
-			<-l2cap.connected
-			if device.Connected != nil {
-				go device.Connected()
-			}
-		}
-	}()
-
-	go func() {
-		<-l2cap.quit
-		if device.Disconnected != nil {
-			go device.Disconnected()
-		}
-	}()
-
-	go func() {
-		for {
-			notification := <-l2cap.notification
-			//log.Print("Client got notification")
-			if device.Notification != nil {
-				go device.Notification(notification)
-			}
-		}
-	}()
-	/*go func() {
-		for {
-			// No need to check s.quit here; if the users closes the server,
-			// hci will get killed, which'll cause an error to be returned here.
-			event, data, err := c.hci.event()
-			log.Printf("l2capevent: %s data: %s err:%s", event, data, err)
-			if err != nil {
-				break
-			}
-
-			if event == "adapterState" && c.StateChange != nil {
-				c.StateChange(data)
-			} else if event == "event" {
-				c.handleAdvertisingEvent(data)
-			}
-		}
-		c.close(err)
-	}()*/
-
-	//spew.Dump(l2cap)
-	return nil
-}
-
 // Close stops the Client.
 func (s *Client) Close() error {
-	if !serving() {
-		return errors.New("not serving")
-	}
 	err := s.hci.Close()
 	s.hci.Wait()
 	/*l2caperr := s.l2cap.close()
@@ -293,7 +232,6 @@ func (c *Client) handleAdvertisingEvent(data string) error {
 		if length > 0 {
 			payload = eir[i+2 : i+2+length-1]
 		}
-
 
 		switch dataType {
 		case 0x01: // Flags
@@ -405,54 +343,124 @@ func isFlagSet(pos uint8, b byte) bool {
 	return uint8(b)>>pos&1 > 0
 }
 
-// XXX: HACKHACK: This is only temporary till the api is fleshed out
-func (c *Client) Notify(address string, enable bool, startHandle uint16, endHandle uint16, useNotify bool, useIndicate bool) {
-	c.devices[address].l2cap.notify(enable, startHandle, endHandle, useNotify, useIndicate)
-}
-
-func (s *Client) close(err error) {
-	s.quitonce.Do(func() {
-		s.err = err
-		close(s.quit)
+func (c *Client) close(err error) {
+	c.quitonce.Do(func() {
+		c.err = err
+		close(c.quit)
 	})
 }
 
-func (c *Client) DiscoverServices(address string) {
-	// XXX: FIXME TODO check if this thing actually exists first
-}
+func (d *DiscoveredDevice) Connect() error {
 
-// func (c *l2capClient) writeByHandle(handle uint16, data []byte) {
+	if d.l2cap != nil {
+		return fmt.Errorf("Device %s is already connected", d.Address)
+	}
 
-func (c *Client) WriteByHandle(address string, handle uint16, data []byte) {
-	c.devices[address].l2cap.writeByHandle(handle, data)
-	// XXX: FIXME TODO check if this thing actually exists first
+	l2cap, err := newL2capClient(d.Address, d.PublicAddress)
+	if err != nil {
+		return err
+	}
 
-}
+	d.l2cap = l2cap
 
-func (c *Client) ReadByHandle(address string, handle uint16) chan []byte {
-	// XXX: FIXME TODO check if this thing actually exists first
-	if c.devices[address] != nil {
-		return c.devices[address].l2cap.readByHandle(handle)
-	} else {
-		log.Printf("Can't read by handle for address %s, address does not exist or not setup ", address)
+	select {
+	case <-l2cap.connected:
+		go func() {
+			for {
+				notification := <-l2cap.notification
+				if d.Notification != nil {
+					go d.Notification(notification)
+				}
+			}
+		}()
+
+		go func() {
+			<-l2cap.quit
+			d.l2cap = nil
+			if d.Disconnected != nil {
+				go d.Disconnected()
+			}
+		}()
+
+		go func() {
+			for {
+				if d.l2cap == nil {
+					break
+				}
+				notification := <-d.l2cap.notification
+				if d.Notification != nil {
+					go d.Notification(notification)
+				}
+			}
+		}()
 		return nil
+	case <-time.After(time.Second * 5):
+		d.Disconnect()
+		return fmt.Errorf("Connection timed out after 5 seconds")
 	}
 
 }
 
-func (c *Client) SendRawCommands(address string, strcmds []string) {
-	if len(address) == 0 || strcmds == nil {
-		log.Fatalf("SendRawCommands received nil address or commands")
-		return
+func (d *DiscoveredDevice) Disconnect() error {
+	return d.l2cap.close()
+}
+
+func (d *DiscoveredDevice) DiscoverServices() error {
+	services, err := d.l2cap.discoverServices()
+
+	if err == nil {
+		d.Services = make(map[string]ServiceDescription)
+
+		for _, service := range services {
+			d.Services[service.UUID] = service
+		}
 	}
 
-	if c.devices[address] == nil {
-		log.Fatalf("Device %s does not exist, has it been created?", address)
+	return err
+}
+
+func (d *DiscoveredDevice) DiscoverCharacteristics(service ServiceDescription) (map[string]CharacteristicDescription, error) {
+	chars, err := d.l2cap.discoverCharacteristics(service)
+
+	if err != nil {
+		return nil, err
 	}
 
-	if c.devices[address].l2cap == nil {
-		log.Fatalf("L2cap client not available for address %s, have you connected to it?", address)
+	characteristics := make(map[string]CharacteristicDescription)
+
+	for _, char := range chars {
+		characteristics[char.UUID] = char
 	}
 
-	c.devices[address].l2cap.SendRawCommands(strcmds)
+	return characteristics, nil
+}
+
+// XXX: HACKHACK: This is only temporary till the api is fleshed out
+func (d *DiscoveredDevice) Notify(enable bool, startHandle uint16, endHandle uint16, useNotify bool, useIndicate bool) {
+	d.l2cap.notify(enable, startHandle, endHandle, useNotify, useIndicate)
+}
+
+func (d *DiscoveredDevice) WriteByHandle(handle uint16, data []byte) {
+	d.l2cap.writeByHandle(handle, data)
+}
+
+func (d *DiscoveredDevice) Write(char CharacteristicDescription, data []byte) {
+	spew.Dump("writing char", char, data)
+	d.l2cap.writeByHandle(char.ValueHandle, data)
+}
+
+func (d *DiscoveredDevice) Read(char CharacteristicDescription) chan []byte {
+	return d.l2cap.readByHandle(char.StartHandle)
+}
+
+func (d *DiscoveredDevice) ReadByHandle(handle uint16) chan []byte {
+	return d.l2cap.readByHandle(handle)
+}
+
+func (d *DiscoveredDevice) SendRawCommands(strcmds []string) {
+	d.l2cap.SendRawCommands(strcmds)
+}
+
+func (d *DiscoveredDevice) UpgradeSecurity() error {
+	return d.l2cap.upgradeSecurity()
 }
