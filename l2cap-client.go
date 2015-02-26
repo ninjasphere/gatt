@@ -132,6 +132,7 @@ type Notification struct {
 }
 
 func (c *l2capClient) upgradeSecurity() error {
+	log.Printf("Upgrading security")
 	return c.shim.Signal(syscall.SIGUSR2)
 }
 
@@ -225,10 +226,15 @@ func (c *l2capClient) eventloop() error {
 		case "log":
 			log.Printf("hci-l2cap-client: %s", s)
 		case "security":
-			level := f[1]
+			spew.Dump(f)
+			level := f[2]
 			log.Printf("Got security event: %s", level)
 			if level == "low" {
 				c.upgradeSecurity()
+				time.Sleep(time.Second)
+			} else {
+				log.Printf("Security upgraded. Resending last command.")
+				c.sendCommand(c.currentCommand)
 			}
 		default:
 			log.Fatalf("unexpected event type: %s", s)
@@ -245,7 +251,7 @@ func (c *l2capClient) commandLoop() error {
 		command := <-c.commands
 		log.Printf("write	: %X", command.buffer)
 
-		c.send(command.buffer)
+		c.sendCommand(command)
 
 		if command.callback != nil {
 			// log.Printf("Command has a callback... waiting for data") // XXX timeout?
@@ -255,6 +261,12 @@ func (c *l2capClient) commandLoop() error {
 
 	}
 	return nil
+}
+
+func (c *l2capClient) sendCommand(command *l2capClientCommand) {
+	log.Printf("write	: %X", command.buffer)
+
+	c.send(command.buffer)
 }
 
 type ServiceDescription struct {
